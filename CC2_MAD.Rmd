@@ -1,0 +1,476 @@
+---
+title: "R Notebook"
+output: github_document
+---
+
+# Dans cette première étape, nous chargeons les packages nécessaires (DADA2 et d'autres) et définissons le chemin d'accès au dossier contenant les fichiers de séquences.
+
+```{r}
+# Charger le package DADA2
+# Le packageVersion permet de vérifier la version de dada2 installée.
+ library(dada2); packageVersion("dada2")
+```
+# Nous listons les fichiers .fastq.gz pour les lectures forward (fnFs) et reverse (fnRs) et extrayons les noms des échantillons à partir des noms de fichiers
+
+```{r}
+# Définir le chemin vers le dossier contenant les séquences
+path <- "/home/rstudio/DADA2-et-Phyloseq"  # Modifier le chemin si nécessaire
+
+# Lister les fichiers forward et reverse
+fnFs <- sort(list.files(path, pattern = "_1.fastq.gz", full.names = TRUE))  # Lectures forward
+fnRs <- sort(list.files(path, pattern = "_2.fastq.gz", full.names = TRUE))  # Lectures reverse
+
+```
+
+
+```{r}
+# Extraire les noms d'échantillons à partir des fichiers
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+
+```
+
+# étape permet de visualiser les profils de qualité des séquences avant de procéder au filtrage. Cela aide à déterminer les seuils de filtrage optimaux pour chaque jeu de données
+```{r}
+# Visualiser la qualité des premiers fichiers forward
+plotQualityProfile(fnFs[1:2])
+
+# Visualiser la qualité des premiers fichiers reverse
+plotQualityProfile(fnRs[1:2])
+
+```
+# Dans cette étape, nous filtrons et trimmons les séquences en fonction des seuils de qualité observés dans l'étape précédente. Cela permet de supprimer les bases de faible qualité, les séquences trop courtes et les séquences contenant trop d'erreurs.
+```{r}
+# Définir le répertoire de sortie pour les fichiers filtrés
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+```
+
+
+```{r}
+# Créer le répertoire de sortie s'il n'existe pas
+if (!dir.exists(file.path(path, "filtered"))) dir.create(file.path(path, "filtered"))
+```
+
+```{r}
+# Filtrer et trimmer les séquences
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(240, 160),
+                     maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+                     compress=TRUE, multithread=TRUE)
+
+```
+
+
+# Nous utilisons les fichiers filtrés pour apprendre les modèles d'erreurs des séquences forward (errF) et reverse (errR). Ensuite, nous appliquons le débruitage (denoising) pour corriger les erreurs de séquençage et obtenir des séquences uniques.
+
+```{r}
+# Apprentissage des erreurs pour les lectures forward
+errF <- learnErrors(filtFs, multithread=TRUE)
+
+# Apprentissage des erreurs pour les lectures reverse
+errR <- learnErrors(filtRs, multithread=TRUE)
+
+```
+
+```{r}
+# Denoising pour les lectures forward
+dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
+
+# Denoising pour les lectures reverse
+dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
+
+```
+# Dans cette étape, nous créons une table de séquences (ASV table) à partir des séquences débruitées et fusionnons les lectures forward et reverse.
+
+```{r}
+# Construire la table des séquences (ASV table)
+seqtab <- makeSequenceTable(dadaFs)
+
+# Afficher la dimension de la table
+dim(seqtab)
+
+```
+
+```{r}
+# Fusionner les lectures forward et reverse
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+
+# Construire la table des séquences après fusion
+seqtab.merged <- makeSequenceTable(mergers)
+
+# Afficher la dimension de la table fusionnée
+dim(seqtab.merged)
+
+```
+#Les chimères sont des artefacts de PCR qui peuvent introduire des biais dans l'analyse. Nous utilisons removeBimeraDenovo() pour supprimer les chimères de la table des séquences
+
+```{r}
+# Retirer les chimères de la table
+seqtab.nochim <- removeBimeraDenovo(seqtab.merged, method="consensus", multithread=TRUE, verbose=TRUE)
+```
+
+
+```{r}
+# Calculer le pourcentage de séquences non-chimériques
+sum(seqtab.nochim)/sum(seqtab.merged)
+
+```
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("dada2")
+BiocManager::install("ShortRead")
+BiocManager::install("Biostrings")
+BiocManager::install("DECIPHER")
+install.packages("ggplot2")
+BiocManager::install("phyloseq")
+
+```
+
+```{r}
+list.files("/home/rstudio/DADA2-et-Phyloseq")
+
+```
+
+```{r}
+download.file("https://zenodo.org/record/1172783/files/silva_nr_v132_train_set.fa.gz", 
+              destfile = "~/tax/silva_nr_v132_train_set.fa.gz", method = "auto")
+
+```
+```{r}
+# Définir le chemin complet du fichier Silva
+refFasta <- "~/tax/silva_nr_v132_train_set.fa.gz"
+
+```
+
+# Dans cette étape, nous assignons les séquences non-chimiériques à des taxons en utilisant la base de données Silva.
+
+
+```{r}
+taxonomy <- dada2::assignTaxonomy(
+  seqs = seqtab.nochim,
+  refFasta = refFasta,  # Utilisation du chemin défini correctement
+  taxLevels = c("Kingdom", "Phylum", "Class", 
+                "Order", "Family", "Genus", 
+                "Species"),
+  multithread = TRUE,
+  minBoot = 60
+)
+
+
+```
+
+```{r}
+head(taxonomy)
+
+```
+
+```{r}
+taxonomy_df <- as.data.frame(taxonomy)
+head(taxonomy_df)
+
+```
+
+
+```{r}
+write.csv(taxonomy, file = "~/taxonomic_assignment.csv")
+
+```
+
+# Nous utilisons l'objet phyloseq pour combiner la table de séquences, la taxonomie et les métadonnées, et pour visualiser la composition taxonomique des échantillons.
+```{r}
+library(phyloseq)
+
+# Créer un objet phyloseq avec les données de séquence et de taxonomie
+physeq <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows = FALSE), 
+                   tax_table(taxonomy))
+
+# Visualiser l'objet phyloseq
+physeq
+
+```
+# Sauvegarde de l'Objet phyloseq
+
+```{r}
+saveRDS(physeq, file = "~/phyloseq_object.rds")
+
+```
+
+# Installation et Chargement de ggplot2 pour la Visualisation
+
+```{r}
+# Installer ggplot2 s'il n'est pas encore installé
+if (!requireNamespace("ggplot2", quietly = TRUE)) {
+  install.packages("ggplot2")
+}
+
+# Charger ggplot2
+library(ggplot2)
+
+```
+
+# Visualisation de la Composition Taxonomique
+
+```{r}
+# Visualiser la composition taxonomique au niveau de la famille
+plot_bar(physeq, fill = "Family") + theme_bw()
+
+```
+# Analyse de la Diversité Beta avec PCoA
+
+```{r}
+# Créer une ordination PCoA basée sur la distance de Bray-Curtis
+ordination <- ordinate(physeq, method = "PCoA", distance = "bray")
+
+# Visualiser l'ordination avec les échantillons colorés par type d'échantillon
+# Remplacez "SampleType" par le nom réel de la variable que vous voulez utiliser pour la couleur
+plot_ordination(physeq, ordination, color = "SampleType") + 
+  geom_point(size = 4) + 
+  theme_bw()
+
+```
+
+# Analyse NMDS de la Diversité Beta
+
+```{r}
+# Calculer la distance Bray-Curtis
+bray_dist <- distance(physeq, method = "bray")
+
+# Réaliser une analyse NMDS
+nmds_ordination <- ordinate(physeq, method = "NMDS", distance = bray_dist)
+
+# Visualiser l'ordination NMDS
+plot_ordination(physeq, nmds_ordination, color = "SampleType") + 
+  geom_point(size = 4) + 
+  theme_bw()
+
+```
+# Sauvegarde et Chargement de l'Objet phyloseq
+
+```{r}
+# Sauvegarder l'objet phyloseq
+saveRDS(physeq, file = "~/phyloseq_object.rds")
+
+# Charger l'objet phyloseq si besoin
+physeq <- readRDS("~/phyloseq_object.rds")
+
+```
+
+
+# Afficher et Vérifier les Objets Importants
+
+```{r}
+# Afficher les dimensions et quelques lignes des objets principaux
+dim(seqtab.nochim)
+head(seqtab.nochim)
+head(taxonomy)
+head(tax_table(physeq))
+
+```
+# Vérification de la Correspondance entre les Colonnes et les Lignes
+
+```{r}
+# Vérifier la correspondance des noms de colonnes et lignes
+identical(colnames(seqtab.nochim), rownames(taxonomy))
+
+```
+# Création d'une Table de Métadonnées
+
+```{r}
+# Créer une table de métadonnées fictive avec des informations sur chaque échantillon
+sample_names <- colnames(seqtab.nochim)  # Utiliser les noms de colonnes de votre séquence
+metadata <- data.frame(
+  SampleID = sample_names,
+  SampleType = factor(rep(c("Type1", "Type2"), length.out = length(sample_names)))
+)
+
+# Définir les noms des lignes de la table de métadonnées pour qu'ils correspondent à ceux de seqtab.nochim
+rownames(metadata) <- sample_names
+
+```
+
+#Création et Visualisation de Tableaux de Données
+
+#Ces sections de code permettent de créer des tableaux fictifs pour illustrer les différentes comparaisons entre les échantillons, par exemple, les changements dans les paramètres physico-chimiques ou la diversité alpha.
+```{r}
+# Créer un tableau pour les paramètres physico-chimiques
+physico_chemical_data <- data.frame(
+  Parameter = c("Salinity (ppt)", "Precipitation (mm)", "pH", 
+                "Total suspended solids (mg/L)", "Turbidity (UNT)", 
+                "Apparent color (UC)", "Conductivity (µS/cm)", 
+                "Total phosphorous (mg/L)", "Ammonium (mg/L)", 
+                "Nitrate (mg/L)", "Nitrite (mg/L)", "Total nitrogen (mg/L)"),
+  T1_Dry_Season = c(9.6, 2, 6.6, 27.66, 4.56, 10.73, 247.33, 1.36, 1.03, 1.76, 0.007, 3.23),
+  T2_Rainy_Season = c(4.43, 5.1, 6.36, 172.66, 162.66, 241, 369, 0.34, 1.9, 1.23, 0.003, 2.4),
+  Fold_Change = c(-2.17, NA, NA, 6.24, 35.67, 22.46, 1.49, -4.0, 1.84, -1.43, NA, NA)
+)
+
+# Afficher le tableau
+print(physico_chemical_data)
+
+```
+# Le tableau de diversité alpha montre les indices de diversité tels que Chao1, Shannon et Simpson pour chaque saison.
+
+
+```{r}
+# Créer un tableau pour les indices de diversité alpha
+alpha_diversity_data <- data.frame(
+  Index = c("Chao1", "Shannon", "Simpson"),
+  T1_Dry_Season = c(85.5, 3.2, 0.78),
+  T2_Rainy_Season = c(123.4, 4.1, 0.85)
+)
+
+# Afficher le tableau
+print(alpha_diversity_data)
+
+
+```
+# Création d'un Tableau pour les Abondances des Phylums Bactériens
+
+```{r}
+# Créer un tableau pour les abondances de phylums bactériens
+bacterial_abundance_data <- data.frame(
+  Phylum = c("Firmicutes", "Bacteroidetes", "Proteobacteria", "Actinobacteria", "Elusimicrobia", "Tenericutes", "Lentisphaerae"),
+  T1_Dry_Season = c(30, 25, 20, 10, 5, 5, 5),  # Exemple de valeurs d'abondance pour chaque phylum
+  T2_Rainy_Season = c(25, 30, 15, 10, 10, 5, 5)  # Modifier selon les valeurs exactes
+)
+
+# Afficher le tableau
+print(bacterial_abundance_data)
+
+```
+
+# Exporter les tableaux créés pour les paramètres physico-chimiques, la diversité alpha et l'abondance des phylums bactériens en fichiers CSV.
+# Ces fichiers peuvent être utilisés pour un traitement ou une visualisation ultérieure dans d'autres outils.
+
+```{r}
+# Exporter les données en CSV
+write.csv(physico_chemical_data, file = "~/physico_chemical_data.csv", row.names = FALSE)
+write.csv(alpha_diversity_data, file = "~/alpha_diversity_data.csv", row.names = FALSE)
+write.csv(bacterial_abundance_data, file = "~/bacterial_abundance_data.csv", row.names = FALSE)
+
+```
+
+# Calculer la différence directe entre les saisons sèche et pluvieuse pour chaque paramètre physico-chimique.Cela permet de visualiser comment chaque paramètre change entre les saisons.
+
+```{r}
+# Calculer la différence directe entre T1 et T2 pour chaque paramètre
+difference <- physico_chemical_data$T2_Rainy_Season - physico_chemical_data$T1_Dry_Season
+
+# Ajouter la différence au tableau
+physico_chemical_data$Difference <- difference
+
+# Afficher les résultats
+print(physico_chemical_data)
+
+```
+# Exemple de Tableau de Données Étendues pour Comparaison de Saisons
+
+
+```{r}
+# Exemple de tableau avec plusieurs observations pour chaque saison et chaque paramètre
+physico_chemical_data_extended <- data.frame(
+  Parameter = rep(c("Salinity", "pH", "Total suspended solids"), each = 6),  # 6 répétitions pour chaque paramètre
+  Season = rep(c("Dry", "Rainy"), each = 3, times = 3),  # 3 répétitions pour chaque saison, répété pour chaque paramètre
+  Value = c(9.6, 9.7, 9.8, 4.4, 4.5, 4.6, 6.5, 6.6, 6.7, 6.2, 6.3, 6.4, 
+            27.5, 27.7, 27.8, 172.5, 172.6, 172.7)  # 6 valeurs pour chaque paramètre
+)
+
+# Afficher le tableau de données
+print(physico_chemical_data_extended)
+
+# Utiliser le test t sur les nouvelles données
+t_test_results <- t.test(Value ~ Season, data = physico_chemical_data_extended)
+
+# Afficher les résultats du test t
+print(t_test_results)
+
+
+```
+# Visualisation des Paramètres Physico-Chimiques entre les Saisons
+
+
+```{r}
+# Charger ggplot2
+library(ggplot2)
+
+# Créer un graphique pour comparer visuellement les deux saisons
+ggplot(physico_chemical_data, aes(x = Parameter)) +
+  geom_bar(aes(y = T1_Dry_Season, fill = "Dry Season"), stat = "identity", position = "dodge") +
+  geom_bar(aes(y = T2_Rainy_Season, fill = "Rainy Season"), stat = "identity", position = "dodge") +
+  labs(title = "Comparaison des Paramètres entre les Deux Saisons", y = "Valeur") +
+  theme_minimal()
+
+```
+# Construction de la Table des Séquences DADA2 (ASV Table)
+
+```{r}
+# Construire la table des séquences
+seqtab <- makeSequenceTable(dadaFs)
+
+# Afficher les dimensions de la table de séquences
+print(dim(seqtab))
+
+```
+# Assignation Taxonomique aux Séquences Non-Chimiériques
+
+
+```{r}
+# Assigner la taxonomie aux séquences non-chimiériques
+taxa <- assignTaxonomy(
+  seqtab.nochim,                        # Table des séquences non-chimiériques
+  refFasta = "~/tax/silva_nr_v132_train_set.fa.gz",  # Chemin vers le fichier de référence Silva
+  multithread = TRUE
+)
+
+# Afficher les premières lignes de la table de taxonomie
+head(taxa)
+
+```
+# Vérification des Dimensions et de la Taxonomie
+
+```{r}
+# Vérification de la dimension et des échantillons de la table des séquences
+dim(seqtab.nochim)
+summary(rowSums(seqtab.nochim))
+
+# Vérification des premiers rangs taxonomiques assignés
+head(taxa)
+```
+# Création et Visualisation de l'Objet Phyloseq
+
+```{r}
+library(phyloseq)
+
+# Créer un objet phyloseq avec la table des séquences (ASV) et la table de taxonomie
+physeq <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows = FALSE), 
+                   tax_table(taxa))
+
+# Afficher un résumé de l'objet phyloseq
+print(physeq)
+
+```
+# Créer un graphique en barres montrant la composition taxonomique des échantillons au niveau du phylum.
+# Le paramètre "fill = Phylum" indique que chaque barre sera colorée en fonction des phylums bactériens.
+# Cela permet de comparer visuellement la proportion de chaque phylum dans les différents échantillons.
+
+```{r}
+plot_bar(physeq, fill = "Phylum") + 
+  theme_minimal() +
+  labs(title = "Composition Taxonomique par Phylum", y = "Abondance relative")
+
+```
+# Calculer la richesse alpha pour chaque échantillon à l'aide de la fonction `estimate_richness` de phyloseq.
+# La richesse alpha mesure la diversité au sein d'un échantillon individuel.
+# Elle inclut des indices comme le Chao1, Shannon et Simpson, qui prennent en compte le nombre d'espèces et leur abondance
+```{r}
+# Calculer la richesse alpha pour chaque échantillon
+alpha_diversity <- estimate_richness(physeq)
+
+# Afficher les premières lignes de la diversité alpha
+head(alpha_diversity)
+
+```
+
+
+
+
