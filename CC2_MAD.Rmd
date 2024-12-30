@@ -471,6 +471,19 @@ alpha_diversity <- estimate_richness(physeq)
 head(alpha_diversity)
 
 ```
+```{r}
+# Étape 8 : Sauvegarde des résultats avec réduction de la taille des fichiers
+# Sauvegarde de la table ASV en format RDS (format binaire compressé)
+saveRDS(seqtab_nochim, file = "ASV_table.rds")
+```
+
+```{r}
+# Sauvegarde des séquences représentatives en format FASTA
+asv_seqs <- colnames(seqtab_nochim)
+asv_headers <- paste0(">ASV_", seq_len(length(asv_seqs)))
+asv_fasta <- c(rbind(asv_headers, asv_seqs))
+writeLines(asv_fasta, con = "ASV_sequences.fasta")
+```
 
 
 
