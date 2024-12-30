@@ -21,8 +21,6 @@ fnFs <- sort(list.files(path, pattern = "_1.fastq.gz", full.names = TRUE))  # Le
 fnRs <- sort(list.files(path, pattern = "_2.fastq.gz", full.names = TRUE))  # Lectures reverse
 
 ```
-
-
 ```{r}
 # Extraire les noms d'échantillons à partir des fichiers
 sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
@@ -69,6 +67,9 @@ errF <- learnErrors(filtFs, multithread=TRUE)
 # Apprentissage des erreurs pour les lectures reverse
 errR <- learnErrors(filtRs, multithread=TRUE)
 
+# Visualisation des erreurs (optionnel)
+plotErrors(errF, nominalQ = TRUE)
+plotErrors(errR, nominalQ = TRUE)
 ```
 
 ```{r}
